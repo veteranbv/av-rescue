@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AV Sync</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #dde1e7; --fg: #151a21; --mut: #5c6675;
+    --acc: #2457d6; --acc-fg: #ffffff; --vid: #0f8f84; --aud: #c96f00;
+    --ok: #18803c; --warn: #a65a00; --err: #c62828; --head: #e0245e;
+    --lane: #eef0f4; --field: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1116; --panel: #161b22; --line: #2a313c; --fg: #e6edf3; --mut: #8d99a8;
+      --acc: #4d8dff; --acc-fg: #04101f; --vid: #2ed3c0; --aud: #ffb02e;
+      --ok: #46c46c; --warn: #f0a336; --err: #ff6b6b; --head: #ff5c8a;
+      --lane: #0b0e13; --field: #0b0e13;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #161b22; --line: #2a313c; --fg: #e6edf3; --mut: #8d99a8;
+    --acc: #4d8dff; --acc-fg: #04101f; --vid: #2ed3c0; --aud: #ffb02e;
+    --ok: #46c46c; --warn: #f0a336; --err: #ff6b6b; --head: #ff5c8a;
+    --lane: #0b0e13; --field: #0b0e13;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 16px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
+  h1 { font-size: 17px; margin: 0 8px 0 0; letter-spacing: .01em; }
+  label.pick { display: flex; align-items: center; gap: 6px; color: var(--mut); font-size: 13px; min-width: 0; }
+  select { background: var(--field); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 6px 8px; font: inherit; max-width: 300px; min-width: 0; }
+  #saveState { margin-left: auto; color: var(--mut); font-size: 12.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 12px; }
+  .player { position: relative; background: #000; border-radius: 10px; overflow: hidden; }
+  video { display: block; width: 100%; max-height: 52vh; background: #000; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center;
+             color: #fff; background: rgba(0,0,0,.7); font-size: 15px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+  .transport { margin-top: 10px; }
+  .clock { font-variant-numeric: tabular-nums; color: var(--mut); }
+  .clock b { color: var(--fg); font-weight: 600; }
+  .spacer { flex: 1; }
+  button { background: var(--field); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 7px 12px; font: inherit; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--mut); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, select:focus-visible, canvas:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  button.primary { background: var(--acc); border-color: var(--acc); color: var(--acc-fg); font-weight: 600; }
+  #playBtn { min-width: 84px; font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 10px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--acc); color: var(--acc-fg); }
+  .lanes-head { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 6px; font-weight: 600; font-size: 13px; }
+  .lanes-head small { color: var(--mut); font-weight: 400; }
+  canvas { display: block; width: 100%; border-radius: 8px; background: var(--lane); touch-action: none; }
+  #overview { height: 104px; }
+  #detail { height: 120px; margin-top: 4px; }
+  .readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+  .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sub { color: var(--mut); font-variant-numeric: tabular-nums; }
+  .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .group > span { color: var(--mut); font-size: 12.5px; margin-right: 2px; }
+  .nudges button { font-variant-numeric: tabular-nums; padding: 6px 9px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px;
+          padding: 3px 4px 3px 10px; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .chip button { padding: 0 7px; border-radius: 999px; line-height: 20px; }
+  .msg { font-size: 13px; color: var(--mut); }
+  .msg.ok { color: var(--ok); } .msg.warn { color: var(--warn); } .msg.err { color: var(--err); }
+  .find { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--aud); border-radius: 10px; }
+  .hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+  progress { width: 220px; height: 8px; accent-color: var(--acc); }
+  pre { white-space: pre-wrap; word-break: break-all; background: var(--field); border: 1px solid var(--line);
+        border-radius: 8px; padding: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 8px 0; }
+  details summary { cursor: pointer; color: var(--mut); font-size: 13px; }
+  kbd { font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 5px; padding: 0 5px; background: var(--field); }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 18px;
+          color: var(--mut); font-size: 13px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 640px) { .big { font-size: 18px; } select { max-width: 100%; } label.pick { width: 100%; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>AV Sync</h1>
+    <label class="pick">Video <select id="videoSel"></select></label>
+    <label class="pick">Audio <select id="audioSel"></select></label>
+    <span id="saveState" role="status"></span>
+  </header>
+
+  <div class="player">
+    <video id="vid" playsinline preload="auto"></video>
+    <div id="vidMsg" class="overlay" hidden></div>
+  </div>
+
+  <div class="row transport">
+    <button id="playBtn" aria-label="Play or pause">▶ Play</button>
+    <span class="clock"><b id="tNow">0:00.000</b> / <span id="tDur">0:00</span></span>
+    <span class="spacer"></span>
+    <span class="seg" id="monitorSeg" role="group" aria-label="What you hear" hidden>
+      <button data-monitor="new" aria-pressed="true">New audio</button>
+      <button data-monitor="camera" aria-pressed="false">Camera audio</button>
+      <button data-monitor="both" aria-pressed="false">Both</button>
+    </span>
+    <span class="seg" role="group" aria-label="Mode">
+      <button id="lockedBtn" aria-pressed="true" title="Audio follows the video">Synced</button>
+      <button id="findBtn" aria-pressed="false" title="Move audio and video independently (F)">Find</button>
+    </span>
+  </div>
+
+  <div class="panel">
+    <div class="lanes-head">Whole recording <small id="overviewHint"></small></div>
+    <canvas id="overview" tabindex="0" aria-label="Overview of the video and audio tracks"></canvas>
+    <div class="lanes-head" style="margin-top:10px">Close up, 8 s around the playhead <small id="detailHint"></small></div>
+    <canvas id="detail" tabindex="0" aria-label="Close-up of both tracks around the playhead"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="readout">
+      <div class="big" id="offsetText">Not synced yet</div>
+      <div class="sub" id="driftText"></div>
+    </div>
+    <hr class="hr">
+    <div class="row">
+      <div class="group nudges" role="group" aria-label="Slide the audio">
+        <span>Slide audio</span>
+        <button data-slide="-1">◀ 1 s</button>
+        <button data-slide="-0.1">◀ 100 ms</button>
+        <button data-slide="-0.01">◀ 10 ms</button>
+        <button data-slide="0.01">10 ms ▶</button>
+        <button data-slide="0.1">100 ms ▶</button>
+        <button data-slide="1">1 s ▶</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="autoBtn" class="primary" hidden>Auto-sync</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="chips" id="points"></div>
+      <button id="addPointBtn">+ Second sync point here</button>
+      <span class="msg" id="syncMsg" role="status"></span>
+    </div>
+    <div class="find" id="findBar" hidden>
+      <div class="row">
+        <span>Find the same moment in both: play the video to a clear spot, then click or drag the
+        <b style="color:var(--aud)">audio</b> lane to where you hear it.</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="clock">video <b id="findV">0:00.000</b> · audio <b id="findA">0:00.000</b></span>
+        <span class="spacer"></span>
+        <button id="lockBtn" class="primary">Lock these together</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <button id="exportBtn" class="primary" disabled>Export video</button>
+      <span class="msg" id="exportName"></span>
+      <progress id="exportProg" max="1" value="0" hidden></progress>
+    </div>
+    <div class="msg" id="coverage" style="margin-top:8px"></div>
+    <div class="msg" id="exportMsg" role="status" style="margin-top:6px"></div>
+    <details id="cmdBox" hidden style="margin-top:8px">
+      <summary>ffmpeg command</summary>
+      <pre id="cmd"></pre>
+      <button id="copyCmd">Copy</button>
+    </details>
+  </div>
+
+  <div class="panel keys" aria-label="Keyboard shortcuts">
+    <div><kbd>Space</kbd> play or pause</div>
+    <div><kbd>←</kbd> <kbd>→</kbd> slide audio 10 ms (<kbd>Shift</kbd> 100 ms, <kbd>Alt</kbd> 1 s)</div>
+    <div><kbd>J</kbd> <kbd>L</kbd> back or ahead 5 s (<kbd>Shift</kbd> 30 s)</div>
+    <div><kbd>F</kbd> find mode, <kbd>Enter</kbd> lock</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const DETAIL_SPAN = 8;          // seconds shown in the close-up
+const MIN_POINT_GAP = 30;       // a second sync point closer than this measures drift poorly
+const MAX_RATE_ERROR = 0.10;    // matches the server's sanity bound
+const HARD_RESYNC = 0.08;       // seek the audio when it is this far off
+const DEAD_ZONE = 0.008;        // ignore smaller playback error
+const MAX_TRIM = 0.03;          // most the audio speed may bend to catch up
+const SETTLE_MS = 300;          // time after a seek before measuring its latency
+const MAX_LEAD = 0.3;           // cap on the learned seek latency
+const FOLLOW_MS = 50;           // sync loop period; runs even when not painting
+
+const $ = (id) => document.getElementById(id);
+const vid = $("vid");
+const aud = new Audio();
+aud.preload = "auto";
+
+const S = {
+  media: [], envRate: 100, video: null, audio: null,
+  anchors: [], mode: "find", monitor: "new",
+  envV: null, envA: null, envCache: new Map(),
+  errSmooth: 0, saveTimer: 0, pendingSave: null, loadToken: 0,
+  lead: 0, settleAt: 0, starting: false,
+};
+
+// ---- formatting -------------------------------------------------------------
+function clock(t, ms = true) {
+  if (!Number.isFinite(t)) return "…";
+  const sign = t < 0 ? "−" : "";
+  t = Math.abs(Math.round(t * 1000) / 1000);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const secs = ms ? s.toFixed(3).padStart(6, "0") : String(Math.floor(s)).padStart(2, "0");
+  return sign + (h ? `${h}:${String(m).padStart(2, "0")}` : m) + ":" + secs;
+}
+function span(t) {
+  const a = Math.abs(t);
+  return a < 60 ? `${a.toFixed(3)} s` : clock(a);
+}
+function setMsg(el, text, kind = "") { el.textContent = text; el.className = "msg " + kind; }
+
+// ---- sync model: audio_time = rate * video_time + offset ---------------------
+function fit(anchors) {
+  if (!anchors.length) return null;
+  const [p, q] = anchors;
+  if (!q) return { rate: 1, offset: p.audio - p.video };
+  const rate = (q.audio - p.audio) / (q.video - p.video);
+  return { rate, offset: p.audio - rate * p.video };
+}
+const model = () => fit(S.anchors);
+const toAudio = (v, m = model()) => m.rate * v + m.offset;
+const toVideo = (a, m = model()) => (a - m.offset) / m.rate;
+const valid = (anchors) => {
+  const m = fit(anchors);
+  return m && Number.isFinite(m.rate) && Math.abs(m.rate - 1) <= MAX_RATE_ERROR;
+};
+
+// Change what plays at video time v by delta seconds of audio. With two points,
+// pivot on the one farther from v so the change lands exactly at v.
+function shiftAt(base, v, delta) {
+  if (base.length === 1) return [{ video: base[0].video, audio: base[0].audio + delta }];
+  const m = fit(base);
+  const [p, q] = base;
+  const far = Math.abs(v - p.video) > Math.abs(v - q.video) ? p : q;
+  const near = far === p ? q : p;
+  const target = toAudio(v, m) + delta;
+  const moved = { video: near.video,
+                  audio: far.audio + (target - far.audio) * (near.video - far.video) / (v - far.video) };
+  return [far, moved].sort((x, y) => x.video - y.video);
+}
+function shiftAll(base, delta) { return base.map((p) => ({ video: p.video, audio: p.audio + delta })); }
+
+function setAnchors(next, { save = true } = {}) {
+  if (next.length && !valid(next)) {
+    setMsg($("syncMsg"), "That would change the audio speed by over 10%. Move the other point first.", "warn");
+    return false;
+  }
+  S.anchors = next.map((p) => ({ video: +p.video, audio: +p.audio })).sort((a, b) => a.video - b.video);
+  if (save) scheduleSave();
+  if (!S.anchors.length) { setMode("find"); return true; }
+  if (S.mode === "locked" && !vid.paused) followVideo();
+  render();
+  return true;
+}
+
+// ---- server ---------------------------------------------------------------------
+async function api(path, options = {}) {
+  const init = { ...options, headers: { "Content-Type": "application/json" } };
+  if (options.body) init.body = JSON.stringify(options.body);
+  const r = await fetch(path, init);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `request failed (${r.status})`);
+  return data;
+}
+async function envelopeOf(item) {
+  if (!item.hasAudio) return null;
+  if (!S.envCache.has(item.id)) {
+    S.envCache.set(item.id, fetch(`/api/envelope/${item.id}`)
+      .then((r) => { if (!r.ok) throw new Error("analysis failed"); return r.arrayBuffer(); })
+      .then((b) => new Uint8Array(b))
+      .catch((e) => { S.envCache.delete(item.id); throw e; }));
+  }
+  return S.envCache.get(item.id);
+}
+function scheduleSave() {
+  clearTimeout(S.saveTimer);
+  $("saveState").textContent = "Saving…";
+  const body = { video: S.video.id, audio: S.audio.id, anchors: S.anchors };
+  S.pendingSave = body;
+  S.saveTimer = setTimeout(async () => {
+    S.pendingSave = null;
+    try { await api("/api/sync", { method: "PUT", body }); $("saveState").textContent = "Saved"; }
+    catch (e) { $("saveState").textContent = "Not saved: " + e.message; }
+  }, 400);
+}
+// A save still waiting on its debounce would be lost with the tab.
+window.addEventListener("pagehide", () => {
+  if (!S.pendingSave) return;
+  clearTimeout(S.saveTimer);
+  fetch("/api/sync", { method: "PUT", keepalive: true, headers: { "Content-Type": "application/json" },
+                       body: JSON.stringify(S.pendingSave) });
+});
+
+// ---- loading ----------------------------------------------------------------------
+async function init() {
+  const data = await api("/api/media");
+  S.media = data.media; S.envRate = data.envRate;
+  const videos = S.media.filter((m) => m.kind === "video");
+  $("videoSel").replaceChildren(...videos.map((m) => new Option(m.name, m.id)));
+  $("videoSel").disabled = videos.length < 2;
+  await chooseVideo(videos.find((v) => candidates(v).length) || videos[0]);
+}
+function candidates(video) {
+  return S.media.filter((m) => m.hasAudio && m.id !== video.id)
+    .sort((a, b) => (a.kind === "audio" ? 0 : 1) - (b.kind === "audio" ? 0 : 1));
+}
+async function chooseVideo(video) {
+  S.loadToken++;
+  pause();
+  S.video = video;
+  $("videoSel").value = video.id;
+  $("vidMsg").hidden = true;
+  vid.src = `/media/${video.id}`;
+  $("tDur").textContent = clock(video.duration, false);
+  $("monitorSeg").hidden = !video.hasAudio;
+  if (!video.hasAudio) S.monitor = "new";
+  applyMonitor();
+  const list = candidates(video);
+  $("autoBtn").hidden = !video.hasAudio || !list.length;
+  $("audioSel").replaceChildren(...list.map((m) => new Option(m.name, m.id)));
+  $("audioSel").disabled = list.length < 2;
+  if (list.length) return chooseAudio(list[0]);
+  S.audio = null; S.envA = null; S.anchors = [];
+  aud.removeAttribute("src"); aud.load();
+  const token = S.loadToken;
+  envelopeOf(video).then((env) => { if (token === S.loadToken) { S.envV = env; render(); } })
+    .catch(() => {});
+  setMode("find");
+  setMsg($("syncMsg"), "No other file with audio to pair with this video.", "warn");
+}
+async function chooseAudio(audio) {
+  const token = ++S.loadToken;
+  pause();
+  S.audio = audio;
+  $("audioSel").value = audio.id;
+  aud.src = `/media/${audio.id}`;
+  S.envV = S.envA = null;
+  S.anchors = [];
+  S.mode = "find";
+  setMsg($("syncMsg"), "");
+  setMsg($("exportMsg"), "");
+  render();
+  const [saved, envV, envA] = await Promise.all([
+    api(`/api/sync?video=${S.video.id}&audio=${audio.id}`).catch(() => ({ anchors: null })),
+    envelopeOf(S.video).catch(() => null),
+    envelopeOf(audio).catch(() => null),
+  ]);
+  if (token !== S.loadToken) return;
+  S.envV = envV; S.envA = envA;
+  if (!envA) setMsg($("syncMsg"), "Could not analyze this audio file; you can still sync by ear.", "warn");
+  S.anchors = saved.anchors || [];
+  $("saveState").textContent = saved.anchors ? "Loaded saved sync" : "";
+  setMode(S.anchors.length ? "locked" : "find");
+}
+
+// ---- playback -------------------------------------------------------------------------
+function applyMonitor() {
+  const camera = S.video?.hasAudio && S.monitor !== "new";
+  vid.muted = !camera;
+  aud.muted = S.monitor === "camera";
+  document.querySelectorAll("[data-monitor]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.monitor === S.monitor)));
+}
+function play() {
+  if (S.mode === "find") aud.play().catch(() => {});
+  vid.play().catch((e) => setMsg($("syncMsg"), "Playback failed: " + e.message, "err"));
+}
+function pause() { vid.pause(); aud.pause(); }
+function togglePlay() { vid.paused ? play() : pause(); }
+
+// Keep the audio on the video's clock. Small errors bend the audio speed a
+// little (inaudible with pitch preserved); large ones seek. A seek lands late
+// by the browser's start-up latency, so that latency is measured after each
+// seek and added to the next one.
+function followVideo(hard = false) {
+  const m = model();
+  if (!m || !S.audio || S.starting) return;
+  const target = toAudio(vid.currentTime, m);
+  const inRange = target >= 0 && target < S.audio.duration;
+  if (!inRange || vid.paused) {
+    aud.pause();
+    if (inRange) aud.currentTime = target;
+    return;
+  }
+  const err = aud.currentTime - target;
+  if (hard || aud.paused || Math.abs(err) > HARD_RESYNC) {
+    aud.currentTime = target + S.lead;
+    aud.playbackRate = m.rate;
+    S.errSmooth = 0;
+    S.settleAt = performance.now() + SETTLE_MS;
+    if (aud.paused) {
+      S.starting = true;
+      aud.play()
+        .then(() => { S.settleAt = performance.now() + SETTLE_MS; })
+        .catch(() => {})
+        .finally(() => { S.starting = false; });
+    }
+    return;
+  }
+  if (S.settleAt && performance.now() >= S.settleAt) {
+    S.settleAt = 0;
+    S.lead = Math.max(0, Math.min(MAX_LEAD, S.lead - err));
+  }
+  S.errSmooth = 0.85 * S.errSmooth + 0.15 * err;
+  const trim = Math.abs(S.errSmooth) < DEAD_ZONE ? 0
+    : Math.max(-MAX_TRIM, Math.min(MAX_TRIM, -S.errSmooth * 2));
+  const rate = m.rate * (1 + trim);
+  if (Math.abs(aud.playbackRate - rate) > 0.001) aud.playbackRate = rate;
+}
+
+function seekVideo(t) {
+  vid.currentTime = Math.max(0, Math.min(S.video.duration, t));
+  if (S.mode === "locked") followVideo(true);
+}
+function seekAudio(t) { aud.currentTime = Math.max(0, Math.min(S.audio.duration, t)); }
+
+function setMode(mode) {
+  S.mode = mode === "locked" && S.anchors.length ? "locked" : "find";
+  $("lockedBtn").setAttribute("aria-pressed", String(S.mode === "locked"));
+  $("findBtn").setAttribute("aria-pressed", String(S.mode === "find"));
+  $("lockedBtn").disabled = !S.anchors.length;
+  $("findBar").hidden = S.mode !== "find";
+  aud.playbackRate = 1;
+  if (S.mode === "locked") followVideo(true);
+  else if (S.anchors.length) seekAudio(toAudio(vid.currentTime));
+  render();
+}
+
+function lockHere() {
+  if (S.audio && setAnchors([{ video: vid.currentTime, audio: aud.currentTime }])) {
+    setMsg($("syncMsg"), "Locked. Press Play and watch the lips; slide to fine-tune.", "ok");
+    setMode("locked");
+  }
+}
+
+// ---- drawing ------------------------------------------------------------------------
+let palette = {};
+const css = (name) =>
+  (palette[name] ??= getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+function prepare(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+// Draw a lane: `timeAt(px)` maps a pixel to the file's own time in seconds.
+// Each column shows the mean loudness it covers, so pauses stay visible even
+// when one pixel spans seconds of audio.
+function lane(ctx, { env, duration, y, h, w, timeAt, color, label, note }) {
+  ctx.fillStyle = css("--panel");
+  ctx.globalAlpha = 0.6; ctx.fillRect(0, y, w, h); ctx.globalAlpha = 1;
+  const mid = y + h / 2, R = S.envRate;
+  ctx.fillStyle = color;
+  for (let x = 0; x < w; x++) {
+    const t0 = timeAt(x), t1 = timeAt(x + 1);
+    if (!(t1 > 0 && t0 < duration)) continue;
+    if (!env) { ctx.globalAlpha = 0.18; ctx.fillRect(x, y + 3, 1, h - 6); ctx.globalAlpha = 1; continue; }
+    const start = Math.max(0, Math.floor(t0 * R));
+    const end = Math.min(env.length, Math.max(start + 1, Math.floor(t1 * R)));
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += env[i];
+    const half = Math.max(0.5, (sum / Math.max(1, end - start) / 255) * (h / 2 - 3));
+    ctx.fillRect(x, mid - half, 1, half * 2);
+  }
+  ctx.font = "600 11px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.textBaseline = "top";
+  const text = note ? `${label}  ${note}` : label;
+  ctx.fillStyle = css("--panel");
+  ctx.globalAlpha = 0.85; ctx.fillRect(3, y + 2, ctx.measureText(text).width + 8, 16); ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.fillText(label, 7, y + 5);
+  if (note) { ctx.fillStyle = css("--fg"); ctx.fillText(note, 7 + ctx.measureText(label + "  ").width, y + 5); }
+}
+function playhead(ctx, x, y, h) { ctx.fillStyle = css("--head"); ctx.fillRect(Math.round(x) - 1, y, 2, h); }
+
+const LANE_H = 44, GAP = 6, TOP = 4;
+const laneAt = (y) => (y < TOP + LANE_H + GAP / 2 ? "video" : "audio");
+
+function drawOverview() {
+  const { ctx, w, h } = prepare($("overview"));
+  if (!S.video) return;
+  const vd = S.video.duration, m = model(), locked = S.mode === "locked" && m;
+  const vAt = (x) => (x / w) * vd;
+  const yA = TOP + LANE_H + GAP;
+  lane(ctx, { env: S.envV, duration: vd, y: TOP, h: LANE_H, w, timeAt: vAt, color: css("--vid"),
+              label: "VIDEO", note: S.video.hasAudio ? (S.envV ? "" : "analyzing…") : "no audio track" });
+  if (S.audio) {
+    const ad = S.audio.duration;
+    const aAt = locked ? (x) => toAudio(vAt(x), m) : (x) => (x / w) * ad;
+    let note = S.envA ? "" : "analyzing…";
+    if (locked) {
+      const before = toAudio(0, m), after = ad - toAudio(vd, m);
+      note = [before > 0.5 && `◀ ${span(before)} more`, after > 0.5 && `${span(after)} more ▶`]
+        .filter(Boolean).join("   ") || note;
+    } else note = `own timeline, ${clock(ad, false)}`;
+    lane(ctx, { env: S.envA, duration: ad, y: yA, h: LANE_H, w, timeAt: aAt, color: css("--aud"),
+                label: "AUDIO", note });
+    if (!locked) playhead(ctx, (aud.currentTime / ad) * w, yA, LANE_H);
+  }
+  ctx.fillStyle = css("--mut");
+  for (const p of S.anchors) {
+    const x = (p.video / vd) * w;
+    ctx.beginPath(); ctx.moveTo(x - 5, h - 1); ctx.lineTo(x + 5, h - 1); ctx.lineTo(x, h - 8); ctx.fill();
+  }
+  playhead(ctx, (vid.currentTime / vd) * w, TOP, locked ? 2 * LANE_H + GAP : LANE_H);
+}
+
+function drawDetail() {
+  const { ctx, w } = prepare($("detail"));
+  if (!S.video) return;
+  const m = model(), locked = S.mode === "locked" && m, half = DETAIL_SPAN / 2;
+  const vNow = vid.currentTime;
+  const vAt = (x) => vNow - half + (x / w) * DETAIL_SPAN;
+  const H = 54, yA = TOP + H + GAP;
+  lane(ctx, { env: S.envV, duration: S.video.duration, y: TOP, h: H, w, timeAt: vAt,
+              color: css("--vid"), label: "VIDEO", note: S.video.hasAudio ? "" : "no audio track" });
+  if (S.audio) {
+    const aNow = aud.currentTime;
+    const aAt = locked ? (x) => toAudio(vAt(x), m) : (x) => aNow - half + (x / w) * DETAIL_SPAN;
+    lane(ctx, { env: S.envA, duration: S.audio.duration, y: yA, h: H, w, timeAt: aAt,
+                color: css("--aud"), label: "AUDIO", note: locked ? "drag to slide" : "drag to scrub" });
+  }
+  ctx.fillStyle = css("--mut");
+  for (let s = Math.ceil(vNow - half); s <= vNow + half; s++) {
+    ctx.fillRect(Math.round(((s - vNow + half) / DETAIL_SPAN) * w), TOP + 2 * H + GAP, 1, 4);
+  }
+  playhead(ctx, w / 2, TOP, 2 * H + GAP);
+}
+
+function renderText() {
+  const m = model(), locked = S.mode === "locked";
+  $("tNow").textContent = clock(vid.currentTime);
+  $("findV").textContent = clock(vid.currentTime);
+  $("findA").textContent = clock(aud.currentTime);
+  $("lockBtn").disabled = !S.audio;
+  $("playBtn").textContent = vid.paused ? "▶ Play" : "❚❚ Pause";
+  if (!m) {
+    $("offsetText").textContent = "Not synced yet";
+    $("driftText").textContent = S.video?.hasAudio ? "Try Auto-sync, or find a matching moment by hand." : "Find a matching moment by hand.";
+  } else {
+    const o = toAudio(vid.currentTime, m) - vid.currentTime;
+    $("offsetText").textContent = Math.abs(o) < 0.0005 ? "Audio and video start together"
+      : `Audio starts ${span(o)} ${o > 0 ? "before" : "after"} the video`;
+    const ppm = (m.rate - 1) * 1e6;
+    $("driftText").textContent = S.anchors.length < 2 ? "One sync point · no drift correction"
+      : `Drift corrected: audio clock ${ppm >= 0 ? "fast" : "slow"} by ${Math.abs(ppm).toFixed(0)} ppm `
+        + `(${(Math.abs(m.rate - 1) * 3600).toFixed(2)} s per hour)`;
+  }
+  const canPoint = locked && S.anchors.length === 1 && Math.abs(vid.currentTime - S.anchors[0].video) >= MIN_POINT_GAP;
+  $("addPointBtn").disabled = !canPoint;
+  $("addPointBtn").title = canPoint ? "Fix clock drift: add a second sync point here"
+    : `Move at least ${MIN_POINT_GAP} s from the first point, ideally near the far end`;
+  $("addPointBtn").hidden = !locked || S.anchors.length === 2;
+  document.querySelector(".nudges").hidden = !locked;
+  const overlaps = m && S.audio && coverage(m)[1] > coverage(m)[0];
+  $("exportBtn").disabled = !overlaps || $("exportBtn").dataset.busy === "1";
+  $("overviewHint").textContent = locked ? "drag the audio lane to slide it, click the video lane to seek"
+    : "click either lane to move that track";
+  $("detailHint").textContent = locked ? "peaks line up when it is in sync" : "match the shapes, then lock";
+}
+function renderPoints() {
+  $("points").replaceChildren(...S.anchors.map((p, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = `Sync point ${i + 1} at ${clock(p.video, false)}`;
+    const jump = document.createElement("button");
+    jump.textContent = "Go"; jump.title = "Jump to this point";
+    jump.onclick = () => seekVideo(p.video);
+    const del = document.createElement("button");
+    del.textContent = "✕"; del.setAttribute("aria-label", `Remove sync point ${i + 1}`);
+    del.onclick = () => {
+      setMsg($("syncMsg"), "");
+      setAnchors(S.anchors.filter((_, j) => j !== i));
+    };
+    chip.append(jump, del);
+    return chip;
+  }));
+}
+// The stretch of video, [first, last] in seconds, that the audio covers.
+function coverage(m) {
+  return [Math.max(0, toVideo(0, m)), Math.min(S.video.duration, toVideo(S.audio.duration, m))];
+}
+function renderCoverage() {
+  const m = model();
+  if (!m || !S.audio) { $("coverage").textContent = ""; $("exportName").textContent = ""; return; }
+  const vd = S.video.duration;
+  const [first, last] = coverage(m);
+  const gaps = [];
+  if (last <= first) gaps.push("The audio does not overlap the video at all.");
+  else {
+    if (first > 0.05) gaps.push(`The first ${span(first)} of video will be silent.`);
+    if (vd - last > 0.05) gaps.push(`The last ${span(vd - last)} of video will be silent.`);
+  }
+  setMsg($("coverage"), gaps.join(" "), gaps.length ? "warn" : "");
+  const name = S.video.name.replace(/\.[^.]+$/, "");
+  const ext = /\.(mp4|m4v|mov|mkv|webm)$/i.exec(S.video.name)?.[0].toLowerCase() || ".mkv";
+  $("exportName").textContent = `→ ${name}.synced${ext}, next to the video`;
+}
+function render() { renderText(); renderPoints(); renderCoverage(); drawOverview(); drawDetail(); }
+
+// The overview scans every envelope frame, so redraw it only when a playhead
+// moves a whole pixel; render() redraws it after any other change.
+let overviewKey = "";
+function frame() {
+  try {
+    renderText(); drawDetail();
+    if (S.video && S.audio) {
+      const w = $("overview").clientWidth;
+      const key = `${Math.round((vid.currentTime / S.video.duration) * w)}|`
+        + `${Math.round((aud.currentTime / S.audio.duration) * w)}`;
+      if (key !== overviewKey) { overviewKey = key; drawOverview(); }
+    }
+  } finally {
+    requestAnimationFrame(frame);
+  }
+}
+
+// ---- pointer interaction -----------------------------------------------------------------
+// onStart(x, y, width) returns a move handler, called with (dx, x), or null.
+function drag(canvas, onStart) {
+  canvas.addEventListener("pointerdown", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const move = onStart(e.clientX - rect.left, e.clientY - rect.top, rect.width);
+    if (!move) return;
+    canvas.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, done = new AbortController(), opts = { signal: done.signal };
+    canvas.addEventListener("pointermove", (ev) => move(ev.clientX - x0, ev.clientX - rect.left), opts);
+    canvas.addEventListener("pointerup", () => done.abort(), opts);
+    canvas.addEventListener("pointercancel", () => done.abort(), opts);
+  });
+}
+drag($("overview"), (x, y, w) => {
+  if (!S.video) return null;
+  const vd = S.video.duration;
+  if (laneAt(y) === "video") {
+    seekVideo((x / w) * vd);
+    return (_, px) => seekVideo((px / w) * vd);
+  }
+  if (!S.audio) return null;
+  if (S.mode === "find") {
+    const ad = S.audio.duration;
+    seekAudio((x / w) * ad);
+    return (_, px) => { seekAudio((px / w) * ad); render(); };
+  }
+  const base = S.anchors, rate = model().rate;
+  return (dx) => setAnchors(shiftAll(base, -(dx / w) * vd * rate));
+});
+drag($("detail"), (x, y, w) => {
+  if (!S.audio) return null;
+  const perPx = DETAIL_SPAN / w;
+  if (laneAt(y) === "video") {
+    const v0 = vid.currentTime;
+    return (dx) => seekVideo(v0 - dx * perPx);
+  }
+  if (S.mode === "find") {
+    const a0 = aud.currentTime;
+    return (dx) => { seekAudio(a0 - dx * perPx); render(); };
+  }
+  const base = S.anchors, v = vid.currentTime, rate = model().rate;
+  return (dx) => setAnchors(shiftAt(base, v, -dx * perPx * rate));
+});
+
+// Sliding the audio right makes it play later against the picture.
+function slide(seconds) {
+  if (S.mode !== "locked") return;
+  setAnchors(shiftAt(S.anchors, vid.currentTime, -seconds * model().rate));
+}
+
+// ---- controls -------------------------------------------------------------------------------
+$("videoSel").onchange = (e) => chooseVideo(S.media.find((m) => m.id === e.target.value));
+$("audioSel").onchange = (e) => chooseAudio(S.media.find((m) => m.id === e.target.value));
+$("playBtn").onclick = togglePlay;
+$("lockedBtn").onclick = () => setMode("locked");
+$("findBtn").onclick = () => { pause(); setMode("find"); };
+$("lockBtn").onclick = lockHere;
+document.querySelectorAll("[data-slide]").forEach((b) => (b.onclick = () => slide(+b.dataset.slide)));
+document.querySelectorAll("[data-monitor]").forEach((b) => (b.onclick = () => { S.monitor = b.dataset.monitor; applyMonitor(); }));
+
+$("addPointBtn").onclick = () => {
+  const v = vid.currentTime;
+  if (setAnchors([...S.anchors, { video: v, audio: toAudio(v) }])) {
+    setMsg($("syncMsg"), "Second point added. If lips drift here, slide until they match; the first point stays put.", "ok");
+  }
+};
+
+$("autoBtn").onclick = async () => {
+  const btn = $("autoBtn");
+  btn.disabled = true; btn.textContent = "Listening…";
+  setMsg($("syncMsg"), "Comparing the camera audio with the new audio…");
+  const token = S.loadToken;
+  try {
+    const r = await api("/api/autosync", { method: "POST", body: { video: S.video.id, audio: S.audio.id } });
+    if (token !== S.loadToken) return;  // the user picked other files meanwhile
+    setAnchors(r.anchors);
+    setMode("locked");
+    const drift = r.anchors.length > 1 ? ` Clock drift of ${Math.abs(r.driftPpm).toFixed(0)} ppm corrected.` : "";
+    setMsg($("syncMsg"), r.confident
+      ? `Synced with high confidence (score ${r.confidence}).${drift} Play to check.`
+      : `Best guess only (score ${r.confidence}, reliable is 8+). Check by ear before exporting.${drift}`,
+      r.confident ? "ok" : "warn");
+  } catch (e) {
+    if (token === S.loadToken) setMsg($("syncMsg"), "Auto-sync failed: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "Auto-sync";
+  }
+};
+
+// Show an export's progress until it ends; `start` makes the request that
+// returns its first status.
+async function followExport(start) {
+  const btn = $("exportBtn");
+  btn.dataset.busy = "1"; btn.disabled = true;
+  $("exportProg").hidden = false; $("exportProg").value = 0;
+  setMsg($("exportMsg"), "Exporting…");
+  try {
+    let st = await start();
+    $("cmd").textContent = st.command; $("cmdBox").hidden = false;
+    while (st.state === "running") {
+      $("exportProg").value = st.progress || 0;
+      setMsg($("exportMsg"), `Exporting… ${Math.round((st.progress || 0) * 100)}%`);
+      await new Promise((r) => setTimeout(r, 400));
+      st = await api("/api/export");
+    }
+    if (st.state === "done") setMsg($("exportMsg"), `Saved ${st.output}`, "ok");
+    else setMsg($("exportMsg"), "Export failed: " + (st.error || "unknown error"), "err");
+  } catch (e) {
+    setMsg($("exportMsg"), "Export failed: " + e.message, "err");
+  } finally {
+    btn.dataset.busy = "0"; $("exportProg").hidden = true; render();
+  }
+}
+$("exportBtn").onclick = () => followExport(() => api("/api/export", { method: "POST",
+  body: { video: S.video.id, audio: S.audio.id, anchors: S.anchors } }));
+$("copyCmd").onclick = async () => {
+  try { await navigator.clipboard.writeText($("cmd").textContent); $("copyCmd").textContent = "Copied"; }
+  catch { $("copyCmd").textContent = "Select and copy"; }
+  setTimeout(() => ($("copyCmd").textContent = "Copy"), 1500);
+};
+
+vid.addEventListener("seeked", () => { if (S.mode === "locked") followVideo(true); });
+vid.addEventListener("pause", () => { if (S.mode === "locked") aud.pause(); });
+vid.addEventListener("ended", pause);
+vid.addEventListener("error", () => {
+  $("vidMsg").textContent = `This browser can't play ${S.video?.name}. Auto-sync and export still work; `
+    + "for a picture, try Chrome or Safari, or convert the video to H.264 MP4.";
+  $("vidMsg").hidden = false;
+});
+aud.addEventListener("error", () => setMsg($("syncMsg"), `This browser can't play ${S.audio?.name}. Try a WAV or M4A copy.`, "err"));
+
+window.addEventListener("keydown", (e) => {
+  if (e.target.closest("select, input, textarea") || e.metaKey || e.ctrlKey) return;
+  const step = e.altKey ? 1 : e.shiftKey ? 0.1 : 0.01;
+  const jump = e.shiftKey ? 30 : 5;
+  const keys = {
+    Space: togglePlay,
+    ArrowLeft: () => slide(-step), ArrowRight: () => slide(step),
+    KeyJ: () => seekVideo(vid.currentTime - jump), KeyL: () => seekVideo(vid.currentTime + jump),
+    KeyF: () => setMode(S.mode === "find" ? "locked" : "find"),
+    Enter: () => { if (S.mode === "find") lockHere(); },
+  };
+  if (e.code === "Enter" && e.target.closest("button")) return;
+  const action = keys[e.code];
+  if (action) { e.preventDefault(); action(); }
+});
+new ResizeObserver(() => { drawOverview(); drawDetail(); }).observe($("overview"));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { palette = {}; render(); });
+
+applyMonitor();
+setInterval(() => { if (S.mode === "locked" && !vid.paused) followVideo(); }, FOLLOW_MS);
+requestAnimationFrame(frame);
+init().catch((e) => setMsg($("syncMsg"), "Could not load media: " + e.message, "err"));
+api("/api/export").then((st) => { if (st.state === "running") followExport(async () => st); })
+  .catch(() => {});
+</script>
+</body>
+</html>

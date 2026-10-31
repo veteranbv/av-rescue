@@ -1,0 +1,29 @@
+# Recordings and renders never belong in this repo.
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.aif
+*.aiff
+*.caf
+*.mp4
+*.m4v
+*.mov
+*.mkv
+*.webm
+*.avi
+*.png
+*.av-sync.json
+
+# Model weights, if downloaded by hand.
+*.pt
+*.ckpt
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.DS_Store
