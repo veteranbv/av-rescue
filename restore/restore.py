@@ -26,6 +26,7 @@ import argparse
 import json
 import math
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -332,6 +333,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Exit normally on SIGTERM so the temp directory of intermediate audio,
+    # possibly from a private recording, is removed rather than left behind.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         main()
     except subprocess.CalledProcessError as e:
