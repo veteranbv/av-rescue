@@ -40,8 +40,12 @@ import torchaudio.functional as AF
 import transformers
 from huggingface_hub import hf_hub_download
 
+# Model files are pinned to the commits this script was tested with, so a
+# change upstream cannot swap in different code-bearing TorchScript files.
 REPO = "sarulab-speech/sidon-v0.1"
+REPO_REVISION = "b3b02d8bbd55fdbc410e6e46e76ef95ace4fbf52"
 FEATURE_MODEL = "facebook/w2v-bert-2.0"
+FEATURE_REVISION = "da985ba0987f70aaeb84a80f2851cfac8c697a7b"
 RATE_IN = 16_000
 RATE_OUT = 48_000
 
@@ -68,10 +72,14 @@ def pick_device(name: str) -> str:
 def load_models(device: str, fe_path: str | None, decoder_path: str | None):
     # TorchScript exports are per device family; CUDA weights only run on CUDA.
     variant = "cuda" if device.startswith("cuda") else "cpu"
-    fe_path = fe_path or hf_hub_download(REPO, f"feature_extractor_{variant}.pt")
-    decoder_path = decoder_path or hf_hub_download(REPO, f"decoder_{variant}.pt")
+    fe_path = fe_path or hf_hub_download(
+        REPO, f"feature_extractor_{variant}.pt", revision=REPO_REVISION
+    )
+    decoder_path = decoder_path or hf_hub_download(
+        REPO, f"decoder_{variant}.pt", revision=REPO_REVISION
+    )
     preprocessor = transformers.SeamlessM4TFeatureExtractor.from_pretrained(
-        FEATURE_MODEL
+        FEATURE_MODEL, revision=FEATURE_REVISION
     )
     fe = torch.jit.load(fe_path, map_location=device).eval()
     decoder = torch.jit.load(decoder_path, map_location=device).eval()
